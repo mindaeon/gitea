@@ -223,17 +223,67 @@ func GetBlobBySHA(ctx context.Context, repo *repo_model.Repository, gitRepo *git
 	if err != nil {
 		return nil, err
 	}
+	return getBlobResponse(ctx, repo, gitBlob, gitBlob.Size(ctx) <= setting.API.DefaultMaxBlobSize)
+}
+
+// GetBlobsBySHA returns the blobs in the order of the SHAs, nil for those that aren't blobs in the repository.
+// Contents are left out of blobs that are too large, and of those that would make the response too large.
+func GetBlobsBySHA(ctx context.Context, repo *repo_model.Repository, gitRepo *git.Repository, shas []string) ([]*api.GitBlobResponse, error) {
+	objectFormat := git.ObjectFormatFromName(repo.ObjectFormatName)
+	infos := make([]*git.CatFileObject, len(shas))
+	batch, cancel, err := gitRepo.CatFileBatch()
+	if err != nil {
+		return nil, err
+	}
+	for i, sha := range shas {
+		if !git.IsStringValidObjectID(objectFormat, sha) {
+			continue
+		}
+		info, err := batch.QueryInfo(sha)
+		if git.IsErrNotExist(err) {
+			continue
+		} else if err != nil {
+			cancel()
+			return nil, err
+		}
+		if info.Type == "blob" {
+			infos[i] = info
+		}
+	}
+	cancel()
+
+	blobs := make([]*api.GitBlobResponse, len(shas))
+	var responseSize int64
+	for i, info := range infos {
+		if info == nil {
+			continue
+		}
+		gitBlob, err := gitRepo.GetBlob(info.ID)
+		if err != nil {
+			return nil, err
+		}
+		withContent := info.Size <= setting.API.DefaultMaxBlobSize && responseSize+info.Size <= setting.API.DefaultMaxResponseSize
+		if withContent {
+			responseSize += info.Size
+		}
+		if blobs[i], err = getBlobResponse(ctx, repo, gitBlob, withContent); err != nil {
+			return nil, err
+		}
+	}
+	return blobs, nil
+}
+
+func getBlobResponse(ctx context.Context, repo *repo_model.Repository, gitBlob *git.Blob, withContent bool) (*api.GitBlobResponse, error) {
 	ret := &api.GitBlobResponse{
 		SHA:  gitBlob.ID.String(),
 		URL:  repo.APIURL() + "/git/blobs/" + url.PathEscape(gitBlob.ID.String()),
 		Size: gitBlob.Size(ctx),
 	}
-
-	blobSize := gitBlob.Size(ctx)
-	if blobSize > setting.API.DefaultMaxBlobSize {
+	if !withContent {
 		return ret, nil
 	}
 
+	blobSize := ret.Size
 	var originContent *strings.Builder
 	if 0 < blobSize && blobSize < lfs.MetaFileMaxSize {
 		originContent = &strings.Builder{}

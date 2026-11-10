@@ -538,6 +538,19 @@
         },
         "description": "GeneralUISettings"
       },
+      "GitBlobList": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "items": {
+                "$ref": "#/components/schemas/GitBlobResponse"
+              },
+              "type": "array"
+            }
+          }
+        },
+        "description": "GitBlobList"
+      },
       "GitBlobResponse": {
         "content": {
           "application/json": {
@@ -21523,6 +21536,53 @@
           }
         },
         "summary": "Fork a repository",
+        "tags": [
+          "repository"
+        ]
+      }
+    },
+    "/repos/{owner}/{repo}/git/blobs": {
+      "get": {
+        "description": "Returns the blobs in the requested order, null for SHAs that are not blobs in the repository. Blobs that are too large, or that would make the response too large, are returned without content, they can be requested separately.",
+        "operationId": "GetBlobs",
+        "parameters": [
+          {
+            "description": "owner of the repo",
+            "in": "path",
+            "name": "owner",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "name of the repo",
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "comma-separated SHAs of the blobs, at most the maximum number of response items",
+            "in": "query",
+            "name": "shas",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/GitBlobList"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        },
+        "summary": "Gets several blobs of a repository.",
         "tags": [
           "repository"
         ]

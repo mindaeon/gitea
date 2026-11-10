@@ -9464,6 +9464,50 @@
         }
       }
     },
+    "/repos/{owner}/{repo}/git/blobs": {
+      "get": {
+        "description": "Returns the blobs in the requested order, null for SHAs that are not blobs in the repository. Blobs that are too large, or that would make the response too large, are returned without content, they can be requested separately.",
+        "produces": [
+          "application/json"
+        ],
+        "tags": [
+          "repository"
+        ],
+        "summary": "Gets several blobs of a repository.",
+        "operationId": "GetBlobs",
+        "parameters": [
+          {
+            "type": "string",
+            "description": "owner of the repo",
+            "name": "owner",
+            "in": "path",
+            "required": true
+          },
+          {
+            "type": "string",
+            "description": "name of the repo",
+            "name": "repo",
+            "in": "path",
+            "required": true
+          },
+          {
+            "type": "string",
+            "description": "comma-separated SHAs of the blobs, at most the maximum number of response items",
+            "name": "shas",
+            "in": "query",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/GitBlobList"
+          },
+          "default": {
+            "$ref": "#/responses/error"
+          }
+        }
+      }
+    },
     "/repos/{owner}/{repo}/git/blobs/{sha}": {
       "get": {
         "produces": [
@@ -34031,6 +34075,15 @@
       "description": "GeneralUISettings",
       "schema": {
         "$ref": "#/definitions/GeneralUISettings"
+      }
+    },
+    "GitBlobList": {
+      "description": "GitBlobList",
+      "schema": {
+        "type": "array",
+        "items": {
+          "$ref": "#/definitions/GitBlobResponse"
+        }
       }
     },
     "GitBlobResponse": {

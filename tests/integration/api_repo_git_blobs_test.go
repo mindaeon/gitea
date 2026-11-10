@@ -5,17 +5,79 @@ package integration
 
 import (
 	"net/http"
+	"net/url"
+	"strings"
 	"testing"
 
 	auth_model "gitea.dev/models/auth"
 	repo_model "gitea.dev/models/repo"
 	"gitea.dev/models/unittest"
 	user_model "gitea.dev/models/user"
+	"gitea.dev/modules/setting"
 	api "gitea.dev/modules/structs"
+	"gitea.dev/modules/test"
 	"gitea.dev/tests"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestAPIReposGitBlobsList(t *testing.T) {
+	defer tests.PrepareTestEnv(t)()
+	const (
+		readmeSHA  = "4b4851ad51df6a7d9f25c979345979eaeb5b349f"
+		commitSHA  = "65f1bf27bc3bf70f64657658635e66094edbcb4d"
+		treeSHA    = "2a2f1d4670728a2e10049e345bd7a276468beab6"
+		unknownSHA = "1234567890123456789012345678901234567890"
+		zeroSHA    = "0000000000000000000000000000000000000000"
+		readmeB64  = "IyByZXBvMQoKRGVzY3JpcHRpb24gZm9yIHJlcG8x"
+	)
+	getBlobs := func(t *testing.T, repoName, shas string, token ...string) []*api.GitBlobResponse {
+		req := NewRequest(t, "GET", "/api/v1/repos/user2/"+repoName+"/git/blobs?shas="+url.QueryEscape(shas))
+		if len(token) > 0 {
+			req.AddTokenAuth(token[0])
+		}
+		return *DecodeJSON(t, MakeRequest(t, req, http.StatusOK), &[]*api.GitBlobResponse{})
+	}
+
+	blobs := getBlobs(t, "repo1", strings.Join([]string{readmeSHA, commitSHA, treeSHA, unknownSHA, zeroSHA, "master:README.md", readmeSHA}, ","))
+	require.Len(t, blobs, 7)
+	require.NotNil(t, blobs[0])
+	assert.Equal(t, readmeSHA, blobs[0].SHA)
+	assert.EqualValues(t, 30, blobs[0].Size)
+	assert.Equal(t, readmeB64, *blobs[0].Content)
+	assert.Equal(t, []*api.GitBlobResponse{nil, nil, nil, nil, nil}, blobs[1:6])
+	assert.Equal(t, blobs[0], blobs[6])
+
+	t.Run("ResponseSize", func(t *testing.T) {
+		defer test.MockVariableValue(&setting.API.DefaultMaxResponseSize, 40)()
+		blobs := getBlobs(t, "repo1", readmeSHA+","+readmeSHA)
+		require.Len(t, blobs, 2)
+		assert.NotNil(t, blobs[0].Content)
+		assert.EqualValues(t, 30, blobs[1].Size)
+		assert.Nil(t, blobs[1].Content)
+	})
+
+	t.Run("Cap", func(t *testing.T) {
+		defer test.MockVariableValue(&setting.API.MaxResponseItems, 2)()
+		assert.Len(t, getBlobs(t, "repo1", readmeSHA+","+readmeSHA), 2)
+		MakeRequest(t, NewRequest(t, "GET", "/api/v1/repos/user2/repo1/git/blobs?shas="+strings.Repeat(readmeSHA+",", 2)+readmeSHA), http.StatusBadRequest)
+		MakeRequest(t, NewRequest(t, "GET", "/api/v1/repos/user2/repo1/git/blobs"), http.StatusBadRequest)
+	})
+
+	t.Run("Permissions", func(t *testing.T) {
+		const repo16ReadmeSHA = "f90451c72ef61a7645293d17b47be7a8e983da57"
+		privateURL := "/api/v1/repos/user2/repo16/git/blobs?shas=" + repo16ReadmeSHA
+		MakeRequest(t, NewRequest(t, "GET", privateURL), http.StatusNotFound)
+		MakeRequest(t, NewRequest(t, "GET", privateURL).AddTokenAuth(getUserToken(t, "user2", auth_model.AccessTokenScopeReadUser)), http.StatusForbidden)
+		MakeRequest(t, NewRequest(t, "GET", privateURL).AddTokenAuth(getUserToken(t, "user4", auth_model.AccessTokenScopeReadRepository)), http.StatusNotFound)
+
+		blobs := getBlobs(t, "repo16", repo16ReadmeSHA+","+readmeSHA, getUserToken(t, "user2", auth_model.AccessTokenScopeReadRepository))
+		require.Len(t, blobs, 2)
+		assert.Equal(t, repo16ReadmeSHA, blobs[0].SHA)
+		assert.Nil(t, blobs[1], "a blob of another repository")
+	})
+}
 
 func TestAPIReposGitBlobs(t *testing.T) {
 	defer tests.PrepareTestEnv(t)()
