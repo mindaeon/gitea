@@ -8,7 +8,6 @@ package git
 
 import (
 	"context"
-	"path"
 	"strings"
 
 	"github.com/go-git/go-git/v5/plumbing"
@@ -16,7 +15,7 @@ import (
 
 // GetTreeEntryByPath get the tree entries according the sub dir
 func (t *Tree) GetTreeEntryByPath(ctx context.Context, gitRepo *Repository, relpath string) (*TreeEntry, error) {
-	if len(relpath) == 0 {
+	if relpath == "" {
 		return &TreeEntry{
 			ID:        t.ID,
 			ptree:     t,
@@ -25,7 +24,6 @@ func (t *Tree) GetTreeEntryByPath(ctx context.Context, gitRepo *Repository, relp
 		}, nil
 	}
 
-	relpath = path.Clean(relpath)
 	parts := strings.Split(relpath, "/")
 	var err error
 	tree := t
