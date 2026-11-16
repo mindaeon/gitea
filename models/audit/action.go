@@ -75,6 +75,7 @@ var (
 	UserName                        = define("user:name:update", "Changed user name from {previous_name} to {scope}.")
 	UserPassword                    = define("user:password", "Changed password of user {scope}.")
 	UserPasswordResetRequest        = define("user:password:resetrequest", "Requested password reset for user {scope}.")
+	UserSessionsDestroy             = define("user:sessions:destroy", "Ended {sessions} web sessions of user {scope} and revoked their remembered sign-ins.")
 	UserVisibility                  = define("user:visibility:update", "Changed visibility of user {scope} from {old_visibility} to {new_visibility}.")
 	UserEmailPrimaryChange          = define("user:email:primary", "Changed primary email of user {scope} to {email}.")
 	UserEmailAdd                    = define("user:email:add", "Added email {email} to user {scope}.")

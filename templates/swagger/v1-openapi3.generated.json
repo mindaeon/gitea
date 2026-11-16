@@ -12606,6 +12606,41 @@
         ]
       }
     },
+    "/admin/users/{username}/sessions": {
+      "delete": {
+        "description": "Ends every web session of the user, including an administrator's impersonation of the user, and revokes the user's remembered sign-ins, so that the user has to sign in again on every device. Access tokens, OAuth2 grants and keys are left as they are. Only the `db`, `file` and `redis` session providers can find the sessions of one user; with another provider the request is refused with 422 and nothing is changed.",
+        "operationId": "adminDeleteUserSessions",
+        "parameters": [
+          {
+            "description": "username of the user to sign out",
+            "in": "path",
+            "name": "username",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "$ref": "#/components/responses/empty"
+          },
+          "403": {
+            "$ref": "#/components/responses/forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/notFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/validationError"
+          }
+        },
+        "summary": "Sign a user out everywhere",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/gitignore/templates": {
       "get": {
         "operationId": "listGitignoresTemplates",

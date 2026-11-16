@@ -80,7 +80,9 @@ func (s *RedisStore) Release() error {
 		return err
 	}
 
-	return s.c.Set(graceful.GetManager().HammerContext(), s.prefix+s.sid, string(data), s.duration).Err()
+	// only while the session exists: Read and Regenerate create it, and a session destroyed
+	// while this request ran (see DestroyUserSessions) must not come back
+	return s.c.SetXX(graceful.GetManager().HammerContext(), s.prefix+s.sid, string(data), s.duration).Err()
 }
 
 // Flush deletes all session data.

@@ -6,6 +6,7 @@ package session
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"gitea.dev/modules/json"
 
@@ -20,7 +21,12 @@ import (
 type VirtualSessionProvider struct {
 	lock     sync.RWMutex
 	provider session.Provider
+	// fileRoot is the directory of the file provider's sessions, empty for other providers
+	fileRoot string
 }
+
+// activeProvider is the provider the session middleware initialized last (setting.SessionConfig.Provider is always "VirtualSession")
+var activeProvider atomic.Pointer[VirtualSessionProvider]
 
 // Init initializes the cookie session provider with the given config.
 func (o *VirtualSessionProvider) Init(gcLifetime int64, config string) error {
@@ -37,6 +43,7 @@ func (o *VirtualSessionProvider) Init(gcLifetime int64, config string) error {
 		o.provider = &session.MemProvider{}
 	case "file":
 		o.provider = &session.FileProvider{}
+		o.fileRoot = opts.ProviderConfig
 	case "redis":
 		o.provider = &RedisProvider{}
 	case "db":
@@ -52,7 +59,11 @@ func (o *VirtualSessionProvider) Init(gcLifetime int64, config string) error {
 	default:
 		return fmt.Errorf("VirtualSessionProvider: Unknown Provider: %s", opts.Provider)
 	}
-	return o.provider.Init(gcLifetime, opts.ProviderConfig)
+	if err := o.provider.Init(gcLifetime, opts.ProviderConfig); err != nil {
+		return err
+	}
+	activeProvider.Store(o)
+	return nil
 }
 
 // Read returns raw session store by session ID.
@@ -60,7 +71,13 @@ func (o *VirtualSessionProvider) Read(sid string) (session.RawStore, error) {
 	o.lock.RLock()
 	defer o.lock.RUnlock()
 	if exist, err := o.provider.Exist(sid); err == nil && exist {
-		return o.provider.Read(sid)
+		store, err := o.provider.Read(sid)
+		if err != nil || o.fileRoot == "" {
+			return store, err
+		}
+		// the file provider writes the session back at the end of every request,
+		// which would bring back a session destroyed while the request ran
+		return &existingFileStore{RawStore: store, provider: o.provider}, nil
 	} else if err != nil {
 		return nil, fmt.Errorf("check if '%s' exist failed: %w", sid, err)
 	}
