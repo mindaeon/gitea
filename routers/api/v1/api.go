@@ -1900,6 +1900,7 @@ func Routes() *web.Router {
 					m.Post("/orgs", bind(api.CreateOrgOption{}), admin.CreateOrg)
 					m.Post("/repos", bind(api.CreateRepoOption{}), admin.CreateRepo)
 					m.Post("/rename", bind(api.RenameUserOption{}), admin.RenameUser)
+					m.Delete("/sessions", admin.DeleteUserSessions)
 					m.Get("/badges", admin.ListUserBadges)
 					m.Post("/badges", bind(api.UserBadgeOption{}), admin.AddUserBadges)
 					m.Delete("/badges", bind(api.UserBadgeOption{}), admin.DeleteUserBadges)

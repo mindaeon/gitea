@@ -20,6 +20,7 @@ import (
 	"gitea.dev/modules/auth/password"
 	"gitea.dev/modules/log"
 	"gitea.dev/modules/optional"
+	"gitea.dev/modules/session"
 	"gitea.dev/modules/setting"
 	api "gitea.dev/modules/structs"
 	"gitea.dev/modules/timeutil"
@@ -565,5 +566,52 @@ func RenameUser(ctx *context.APIContext) {
 		}
 		return
 	}
+	ctx.Status(http.StatusNoContent)
+}
+
+// DeleteUserSessions api for signing a user out everywhere
+func DeleteUserSessions(ctx *context.APIContext) {
+	// swagger:operation DELETE /admin/users/{username}/sessions admin adminDeleteUserSessions
+	// ---
+	// summary: Sign a user out everywhere
+	// description: Ends every web session of the user, including an administrator's impersonation of the user,
+	//   and revokes the user's remembered sign-ins, so that the user has to sign in again on every device.
+	//   Access tokens, OAuth2 grants and keys are left as they are. Only the `db`, `file` and `redis` session
+	//   providers can find the sessions of one user; with another provider the request is refused with 422
+	//   and nothing is changed.
+	// produces:
+	// - application/json
+	// parameters:
+	// - name: username
+	//   in: path
+	//   description: username of the user to sign out
+	//   type: string
+	//   required: true
+	// responses:
+	//   "204":
+	//     "$ref": "#/responses/empty"
+	//   "403":
+	//     "$ref": "#/responses/forbidden"
+	//   "404":
+	//     "$ref": "#/responses/notFound"
+	//   "422":
+	//     "$ref": "#/responses/validationError"
+
+	if ctx.ContextUser.IsOrganization() {
+		ctx.APIError(http.StatusUnprocessableEntity, "target is an organization but not user")
+		return
+	}
+
+	destroyed, err := user_service.SignOutEverywhere(ctx, ctx.ContextUser)
+	if err != nil {
+		if errors.Is(err, session.ErrUserSessionsUnsupported) {
+			ctx.APIError(http.StatusUnprocessableEntity, err.Error())
+		} else {
+			ctx.APIErrorInternal(err)
+		}
+		return
+	}
+	log.Trace("Admin %s ended %d sessions of user %s", ctx.Doer.Name, destroyed, ctx.ContextUser.Name)
+
 	ctx.Status(http.StatusNoContent)
 }

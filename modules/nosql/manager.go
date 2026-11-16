@@ -37,6 +37,11 @@ func (r *redisClientHolder) Close() error {
 	return manager.CloseRedisClient(r.name[0])
 }
 
+// Unwrap returns the client this holder shares, so that a caller can tell a cluster client apart
+func (r *redisClientHolder) Unwrap() redis.UniversalClient {
+	return r.UniversalClient
+}
+
 type levelDBHolder struct {
 	name  []string
 	count int64

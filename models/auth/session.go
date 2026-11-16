@@ -100,6 +100,11 @@ func RegenerateSession(ctx context.Context, oldKey, newKey string) (*Session, er
 	})
 }
 
+// IterateSessions calls f for every stored session, expired or not
+func IterateSessions(ctx context.Context, f func(ctx context.Context, s *Session) error) error {
+	return db.Iterate(ctx, nil, f)
+}
+
 // CountSessions returns the number of sessions
 func CountSessions(ctx context.Context) (int64, error) {
 	return db.GetEngine(ctx).Count(&Session{})

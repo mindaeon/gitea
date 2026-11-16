@@ -6,6 +6,7 @@ package integration
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"testing"
 	"time"
 
@@ -275,6 +276,65 @@ func TestAPIRenameUser(t *testing.T) {
 		"new_name": "user2",
 	}).AddTokenAuth(token)
 	MakeRequest(t, req, http.StatusNoContent)
+}
+
+func TestAPIAdminDeleteUserSessions(t *testing.T) {
+	defer tests.PrepareTestEnv(t)()
+	adminToken := getUserToken(t, "user1", auth_model.AccessTokenScopeWriteAdmin)
+
+	signedIn := loginUser(t, "user2")
+	signedInElsewhere := loginUser(t, "user2")
+	remembered := emptyTestSession(t)
+	remembered.MakeRequest(t, NewRequestWithValues(t, "POST", "/user/login", map[string]string{
+		"user_name": "user2",
+		"password":  userPassword,
+		"remember":  "on",
+	}), http.StatusSeeOther)
+	rememberCookie := remembered.GetRawCookie(setting.CookieRememberName)
+	require.NotNil(t, rememberCookie)
+	otherUser := loginUser(t, "user4")
+	user2Token := getTokenForLoggedInUser(t, signedIn, auth_model.AccessTokenScopeWriteAdmin, auth_model.AccessTokenScopeReadUser)
+
+	for _, session := range []*TestSession{signedIn, signedInElsewhere, remembered, otherUser} {
+		session.MakeRequest(t, NewRequest(t, "GET", "/user/settings"), http.StatusOK)
+	}
+	unittest.AssertExistsAndLoadBean(t, &auth_model.AuthToken{UserID: 2})
+
+	t.Run("NotAdmin", func(t *testing.T) {
+		req := NewRequest(t, "DELETE", "/api/v1/admin/users/user4/sessions").AddTokenAuth(user2Token)
+		MakeRequest(t, req, http.StatusForbidden)
+		otherUser.MakeRequest(t, NewRequest(t, "GET", "/user/settings"), http.StatusOK)
+	})
+	t.Run("Organization", func(t *testing.T) {
+		req := NewRequest(t, "DELETE", "/api/v1/admin/users/org3/sessions").AddTokenAuth(adminToken)
+		MakeRequest(t, req, http.StatusUnprocessableEntity)
+	})
+	t.Run("NotExist", func(t *testing.T) {
+		req := NewRequest(t, "DELETE", "/api/v1/admin/users/no-such-user/sessions").AddTokenAuth(adminToken)
+		MakeRequest(t, req, http.StatusNotFound)
+	})
+
+	req := NewRequest(t, "DELETE", "/api/v1/admin/users/user2/sessions").AddTokenAuth(adminToken)
+	MakeRequest(t, req, http.StatusNoContent)
+
+	// every web session of user2 is ended, and only those
+	for _, session := range []*TestSession{signedIn, signedInElsewhere, remembered} {
+		session.MakeRequest(t, NewRequest(t, "GET", "/user/settings"), http.StatusSeeOther)
+	}
+	otherUser.MakeRequest(t, NewRequest(t, "GET", "/user/settings"), http.StatusOK)
+
+	// the remembered sign-in no longer signs in
+	unittest.AssertNotExistsBean(t, &auth_model.AuthToken{UserID: 2})
+	session := emptyTestSession(t)
+	baseURL, err := url.Parse(setting.AppURL)
+	require.NoError(t, err)
+	session.jar.SetCookies(baseURL, []*http.Cookie{rememberCookie})
+	session.MakeRequest(t, NewRequest(t, "GET", "/user/login"), http.StatusOK)
+	session.MakeRequest(t, NewRequest(t, "GET", "/user/settings"), http.StatusSeeOther)
+
+	// access tokens are left as they are, and the user can sign in again
+	MakeRequest(t, NewRequest(t, "GET", "/api/v1/user").AddTokenAuth(user2Token), http.StatusOK)
+	loginUser(t, "user2").MakeRequest(t, NewRequest(t, "GET", "/user/settings"), http.StatusOK)
 }
 
 func TestAPICron(t *testing.T) {
