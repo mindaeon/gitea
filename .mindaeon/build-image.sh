@@ -21,6 +21,8 @@
 # (linux/amd64,linux/arm64), MINDAEON_BUILDER (mindaeon-reproducible), MINDAEON_OUT (where the
 # SBOMs and the build's metadata are written; a new temporary folder by default).
 set -eu
+# The clone below is the build's context: its files' modes must not depend on who runs this.
+umask 022
 
 push=false
 if [ "${1:-}" = "--push" ]; then

@@ -35,8 +35,11 @@ RUN --mount=type=cache,target="/root/.cache/go-build" \
 
 COPY docker/rootless /tmp/local
 
-# Set permissions for builds that made under windows which strips the executable bit from file
-RUN chmod 755 /tmp/local/usr/local/bin/* \
+# Set permissions for builds that made under windows which strips the executable bit from file.
+# Mindaeon: every mode is set here rather than kept from the build host's checkout (whose umask
+# made these group-writable on one host and not another), so the image is the same anywhere.
+RUN chmod -R u=rwX,go=rX /tmp/local \
+ && chmod 755 /tmp/local/usr/local/bin/* \
               /go/src/gitea.dev/gitea
 
 FROM docker.io/library/alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf AS gitea-rootless
@@ -51,8 +54,12 @@ RUN apk --no-cache add \
     git \
     curl \
     gnupg \
-    openssh-keygen
+    openssh-keygen \
+ && rm -f /var/log/apk.log
 
+# Mindaeon: adduser writes the day it ran into /etc/shadow; the build's own date
+# (SOURCE_DATE_EPOCH) is written instead, so a rebuild on another day is the same image.
+ARG SOURCE_DATE_EPOCH
 RUN addgroup \
     -S -g 1000 \
     git && \
@@ -62,7 +69,8 @@ RUN addgroup \
     -s /bin/bash \
     -u 1000 \
     -G git \
-    git
+    git && \
+  sed -i "s/^git:\([^:]*\):[0-9]*:/git:\1:$(( ${SOURCE_DATE_EPOCH:-0} / 86400 )):/" /etc/shadow
 
 RUN mkdir -p /var/lib/gitea /etc/gitea
 RUN chown git:git /var/lib/gitea /etc/gitea
