@@ -3,13 +3,24 @@
 # image is pinned by digest. The image goes to ghcr.io/mindaeon/gitea as
 # <version from .mindaeon/version> (never moved once published) and sha-<commit>; its SBOMs go
 # to the release v<version>.
+#
+# The image is built from the commit that set .mindaeon/version, not from the branch's head: a
+# later commit that changes only .github/ (this file) publishes nothing new, and the rebuild of
+# the version's commit reproduces its digest or fails. A later commit that changes anything
+# else without raising .mindaeon/version fails here.
+#
+# Pushing to ghcr.io uses GHCR_PUSH_TOKEN, a secret of the `release` environment (which only
+# mindaeon/* branches and v*-mindaeon.* tags may deploy to), not GITHUB_TOKEN: the package was
+# first published from a workstation, so this repository is not in its "Manage Actions access"
+# list, and GitHub has no API to add it; GITHUB_TOKEN with packages: write is refused
+# (write_package). The job runs only on a push to this repository, never for a pull request or
+# a fork.
 name: mindaeon-image
 
 on:
   push:
     branches:
       - "mindaeon/*"
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -20,16 +31,27 @@ concurrency:
 
 jobs:
   image:
-    if: github.repository == 'mindaeon/gitea'
+    if: github.repository == 'mindaeon/gitea' && github.event_name == 'push'
     runs-on: ubuntu-24.04
+    environment: release
     timeout-minutes: 120
     permissions:
       contents: write # the release that carries the SBOMs
-      packages: write # ghcr.io/mindaeon/gitea
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+          fetch-depth: 0 # to find the commit that set .mindaeon/version
+      - name: Find the version's commit
+        id: source
+        run: |
+          commit=$(git log -1 --format=%H -- .mindaeon/version)
+          if ! git diff --quiet "$commit" HEAD -- . ':(exclude).github'; then
+            echo "files outside .github/ changed after $commit set .mindaeon/version: raise .mindaeon/version" >&2
+            git diff --stat "$commit" HEAD -- . ':(exclude).github' >&2
+            exit 1
+          fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:
           image: docker.io/tonistiigi/binfmt:latest@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
@@ -42,8 +64,8 @@ jobs:
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: mindaeon
+          password: ${{ secrets.GHCR_PUSH_TOKEN }}
       - name: Install syft 1.52.0
         run: |
           curl -fsSL -o "$RUNNER_TEMP/syft.tar.gz" https://github.com/anchore/syft/releases/download/v1.52.0/syft_1.52.0_linux_amd64.tar.gz
@@ -53,17 +75,19 @@ jobs:
       - name: Build and publish
         env:
           MINDAEON_OUT: ${{ runner.temp }}/out
-        run: .mindaeon/build-image.sh --push
+          COMMIT: ${{ steps.source.outputs.commit }}
+        run: .mindaeon/build-image.sh --push "$COMMIT"
       - name: Publish the SBOMs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OUT: ${{ runner.temp }}/out
+          COMMIT: ${{ steps.source.outputs.commit }}
         run: |
           version=$(cat .mindaeon/version)
           image=$(cat "$OUT/image")
           if ! gh release view "v$version" >/dev/null 2>&1; then
-            gh release create "v$version" --target "$GITHUB_SHA" --title "Gitea $version" \
-              --notes "Mindaeon's Gitea, built from $GITHUB_SHA on $GITHUB_REF_NAME: \`$image\`."
+            gh release create "v$version" --target "$COMMIT" --title "Gitea $version" \
+              --notes "Mindaeon's Gitea, built from $COMMIT on $GITHUB_REF_NAME: \`$image\`."
           fi
           gh release upload "v$version" --clobber "$OUT"/*.spdx.json
           echo "$image" >> "$GITHUB_STEP_SUMMARY"
