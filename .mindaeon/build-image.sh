@@ -12,14 +12,19 @@
 # Alpine's packages are installed at their current 3.24 versions, so a rebuild matches while
 # Alpine's repository serves the same ones; the SBOMs record what went in.
 #
-# A version tag is never moved: when <image>:<version> exists with another digest, the push
-# fails, and the change needs a new version in .mindaeon/version.
+# The image is built into a local OCI layout and checked before anything is pushed: when
+# <image>:<version> or <image>:sha-<commit> exists with another digest, or MINDAEON_EXPECT_DIGEST
+# names another digest, the script fails and pushes nothing; a version tag is never moved, so
+# the change needs a new version in .mindaeon/version. Only then does --push publish the
+# layout, byte for byte (crane), as sha-<commit> and then <version>.
 #
 #   .mindaeon/build-image.sh [--push] [<commit>]
 #
-# Environment: MINDAEON_IMAGE (ghcr.io/mindaeon/gitea), MINDAEON_PLATFORMS
-# (linux/amd64,linux/arm64), MINDAEON_BUILDER (mindaeon-reproducible), MINDAEON_OUT (where the
-# SBOMs and the build's metadata are written; a new temporary folder by default).
+# Needs docker buildx, crane and (with --push) syft on PATH. Environment: MINDAEON_IMAGE
+# (ghcr.io/mindaeon/gitea), MINDAEON_PLATFORMS (linux/amd64,linux/arm64), MINDAEON_BUILDER
+# (mindaeon-reproducible), MINDAEON_OUT (where the SBOMs, the OCI layout and the build's
+# metadata are written; a new temporary folder by default), MINDAEON_EXPECT_DIGEST (the index
+# digest this build must have, to prove a rebuild without pushing).
 set -eu
 # The clone below is the build's context: its files' modes must not depend on who runs this.
 umask 022
@@ -49,6 +54,42 @@ epoch=$(git -C "$context" log -1 --format=%ct)
 # so anything comparing versions sees 28.3.0. The image tag cannot carry "+".
 gitea_version=$(echo "$version" | sed 's/-mindaeon\./+mindaeon./')
 
+# The digest a tag names, nothing when the tag does not exist; any other failure (network,
+# authentication) stops the script rather than reading as "not there".
+lookup() {
+  if crane digest "$1" 2>"$out/lookup.err"; then
+    return 0
+  elif grep -qE 'MANIFEST_UNKNOWN|NAME_UNKNOWN|404' "$out/lookup.err"; then
+    return 0
+  fi
+  cat "$out/lookup.err" >&2
+  return 1
+}
+
+# Checks the digest against everything it must match. Run before the build to fail early and
+# again after it, since a build takes a while; nothing is pushed until it passes.
+check() {
+  expect=${MINDAEON_EXPECT_DIGEST:-}
+  version_digest=$(lookup "$image:$version")
+  sha_digest=$(lookup "$image:sha-$commit")
+  [ -n "${1:-}" ] || return 0
+  if [ -n "$expect" ] && [ "$expect" != "$1" ]; then
+    echo "this build is $1, MINDAEON_EXPECT_DIGEST is $expect: not reproduced" >&2
+    return 1
+  fi
+  if [ -n "$version_digest" ] && [ "$version_digest" != "$1" ]; then
+    echo "$image:$version is $version_digest, this build is $1: give the change a new version in .mindaeon/version" >&2
+    return 1
+  fi
+  if [ -n "$sha_digest" ] && [ "$sha_digest" != "$1" ]; then
+    echo "$image:sha-$commit is $sha_digest, this build is $1: not reproduced" >&2
+    return 1
+  fi
+}
+
+check ""
+layout="$out/oci"
+rm -rf "$layout"
 echo "building $image:$version from $commit ($platforms)" >&2
 docker buildx build --builder "$builder" --no-cache \
   --file "$context/Dockerfile.rootless" --target gitea-rootless \
@@ -61,23 +102,38 @@ docker buildx build --builder "$builder" --no-cache \
   --annotation "index:org.opencontainers.image.version=$version" \
   --annotation "index:org.opencontainers.image.licenses=MIT" \
   --metadata-file "$out/metadata.json" \
-  --output "type=image,name=$image:sha-$commit,push=$push,rewrite-timestamp=true,oci-mediatypes=true" \
+  --output "type=oci,tar=false,dest=$layout,name=$image:$version,rewrite-timestamp=true,oci-mediatypes=true" \
   "$context"
 
 digest=$(sed -n 's/.*"containerimage.digest": *"\(sha256:[0-9a-f]*\)".*/\1/p' "$out/metadata.json")
+if [ -z "$digest" ] || ! grep -q "\"digest\":\"$digest\"" "$layout/index.json"; then
+  echo "the build's metadata and its OCI layout do not name one image index" >&2
+  exit 1
+fi
 echo "$image@$digest" >"$out/image"
-echo "built $image:sha-$commit@$digest" >&2
+echo "built $image:$version@$digest" >&2
+check "$digest"
+if [ -n "$version_digest" ]; then
+  echo "$image:$version is already this build: reproduced" >&2
+elif [ -n "${MINDAEON_EXPECT_DIGEST:-}" ]; then
+  echo "this build is MINDAEON_EXPECT_DIGEST: reproduced" >&2
+fi
 [ "$push" = true ] || exit 0
 
-existing=$(docker buildx imagetools inspect "$image:$version" --format '{{.Manifest.Digest}}' 2>/dev/null || true)
-if [ -z "$existing" ]; then
-  docker buildx imagetools create --tag "$image:$version" "$image@$digest"
-elif [ "$existing" != "$digest" ]; then
-  echo "$image:$version is $existing, this build is $digest: give the change a new version in .mindaeon/version" >&2
-  exit 1
-else
-  echo "$image:$version is already this build: reproduced" >&2
-fi
+# Push the layout itself, so the registry holds exactly the bytes that were checked.
+publish() {
+  pushed=$(lookup "$image:$1")
+  if [ -z "$pushed" ]; then
+    crane push "$layout" "$image:$1" >&2
+    pushed=$(lookup "$image:$1")
+  fi
+  if [ "$pushed" != "$digest" ]; then
+    echo "$image:$1 is $pushed after the push, this build is $digest" >&2
+    exit 1
+  fi
+}
+publish "sha-$commit"
+publish "$version"
 
 for platform in $(echo "$platforms" | tr ',' ' '); do
   arch=$(echo "$platform" | tr '/' '-')
