@@ -72,6 +72,11 @@ jobs:
           echo "caeedb81fb0491615f1ebd1761e4145d41ee86dd2cc7bf80669f9f5ad9d6133d  $RUNNER_TEMP/syft.tar.gz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/syft.tar.gz" -C "$RUNNER_TEMP" syft
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Install crane 0.22.1
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/crane.tar.gz" https://github.com/google/go-containerregistry/releases/download/v0.22.1/go-containerregistry_Linux_x86_64.tar.gz
+          echo "0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0  $RUNNER_TEMP/crane.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/crane.tar.gz" -C "$RUNNER_TEMP" crane
       - name: Build and publish
         env:
           MINDAEON_OUT: ${{ runner.temp }}/out
