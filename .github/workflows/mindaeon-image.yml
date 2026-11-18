@@ -9,12 +9,11 @@
 # the version's commit reproduces its digest or fails. A later commit that changes anything
 # else without raising .mindaeon/version fails here.
 #
-# Pushing to ghcr.io uses GHCR_PUSH_TOKEN, a secret of the `release` environment (which only
-# mindaeon/* branches and v*-mindaeon.* tags may deploy to), not GITHUB_TOKEN: the package was
-# first published from a workstation, so this repository is not in its "Manage Actions access"
-# list, and GitHub has no API to add it; GITHUB_TOKEN with packages: write is refused
-# (write_package). The job runs only on a push to this repository, never for a pull request or
-# a fork.
+# Pushing to ghcr.io uses this run's own GITHUB_TOKEN with packages: write. The repository has
+# Write in the package's "Manage Actions access" list (set in the package's settings; GitHub has
+# no API for it), so no long-lived personal token is kept. The job runs only on a push to this
+# repository, in the `release` environment (which only mindaeon/* branches and v*-mindaeon.*
+# tags may deploy to), never for a pull request or a fork.
 name: mindaeon-image
 
 on:
@@ -37,6 +36,7 @@ jobs:
     timeout-minutes: 120
     permissions:
       contents: write # the release that carries the SBOMs
+      packages: write # ghcr.io/mindaeon/gitea
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -64,8 +64,8 @@ jobs:
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
-          username: mindaeon
-          password: ${{ secrets.GHCR_PUSH_TOKEN }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Install syft 1.52.0
         run: |
           curl -fsSL -o "$RUNNER_TEMP/syft.tar.gz" https://github.com/anchore/syft/releases/download/v1.52.0/syft_1.52.0_linux_amd64.tar.gz
